@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Vision-Serveless - Painel de Controle</title>
+    <style>body{font-family:sans-serif;margin:2em;background-color:#f4f4f9} .container{max-width:900px;margin:auto;background:white;padding:2em;border-radius:8px} h1,h2{color:#333;border-bottom:2px solid #007bff;padding-bottom:10px} .form-section,.status-section{border:1px solid #ddd;padding:1.5em;margin-bottom:1.5em;border-radius:5px} label,input,select,button{display:block;width:95%;margin-bottom:1em;padding:10px;border-radius:4px;border:1px solid #ccc} button{background-color:#007bff;color:white;border:none;cursor:pointer;font-size:16px} button:hover{background-color:#0056b3} #logs,#results{background-color:#282c34;color:#abb2bf;padding:1em;height:200px;overflow-y:scroll;white-space:pre-wrap;font-family:monospace} .status-ok{color:green} .status-err{color:red}</style>
+</head>
+<body>
+<div class="container">
+    <h1>Painel de Controle Vision-Serveless</h1>
+    <div class="status-section">
+        <h2>Status da Infraestrutura</h2>
+        {% for service, status in system_status.items() %}
+            <p class="{{ 'status-ok' if 'Online' in status else 'status-err' }}">
+                <strong>{{ service }}:</strong> {{ status }}
+            </p>
+        {% else %}
+            <p class="status-err">Status indisponível. Rode 'python main.py' para verificar.</p>
+        {% endfor %}
+    </div>
+
+    <div class="form-section">
+        <h2>Processamento de Imagem</h2>
+        <form class="upload-form">
+            <input type="hidden" name="operation" value="img_to_bw">
+            <label>Converter para Preto e Branco</label>
+            <input type="file" name="file" required>
+            <button type="submit">Executar</button>
+        </form>
+        <hr>
+        <form class="upload-form">
+             <input type="hidden" name="operation" value="img_change_format">
+             <label>Converter Formato de Imagem</label>
+             <input type="file" name="file" required>
+             <select name="params" required>
+                 <option value="jpeg">Para JPEG</option>
+                 <option value="png">Para PNG</option>
+             </select>
+             <button type="submit">Executar</button>
+        </form>
+    </div>
+
+    <div class="form-section">
+        <h2>Processamento de Vídeo</h2>
+        <form class="upload-form">
+            <input type="hidden" name="operation" value="extract_frame">
+            <label>Extrair Frame de Vídeo</label>
+            <input type="file" name="file" required>
+            <input type="number" name="params" placeholder="Segundo para extrair (ex: 5)" required>
+            <button type="submit">Executar</button>
+        </form>
+    </div>
+
+    <h2>Resultados e Logs</h2>
+    <div id="results">Aguardando requisição...</div>
+    <div id="logs">Carregando logs...</div>
+</div>
+<script>
+document.querySelectorAll('.upload-form').forEach(form => {
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const resultsDiv = document.getElementById('results');
+        const button = this.querySelector('button');
+        resultsDiv.innerHTML = "Enviando requisição...";
+        button.disabled = true;
+        try {
+            const response = await fetch('/upload', { method: 'POST', body: formData });
+            const data = await response.json();
+            resultsDiv.innerHTML = response.ok ? `<p style="color:green;">${data.success}</p>` : `<p style="color:red;">${data.error}</p>`;
+        } catch (err) {
+            resultsDiv.innerHTML = `<p style="color:red;">Erro de conexão.</p>`;
+        } finally {
+            button.disabled = false;
+        }
+    });
+});
+async function fetchLogs() {
+    const logsDiv = document.getElementById('logs');
+    try {
+        const response = await fetch('/logs');
+        const text = await response.text();
+        if (logsDiv.textContent !== text) {
+            logsDiv.textContent = text;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+    } catch (error) { /* Silently fail */ }
+}
+setInterval(fetchLogs, 3000);
+fetchLogs();
+</script>
+</body>
+</html>

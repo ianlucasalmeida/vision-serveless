@@ -1,0 +1,13 @@
+# /vision-serveless/faas-function/stack.yml
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+functions:
+  vision-processor:
+    lang: python3-flask
+    handler: ./handler.py
+    image: seu-dockerhub-user/vision-processor:latest
+    environment:
+        MINIO_URL: "minio:9000"
+        MINIO_ACCESS_KEY: "minioadmin"
+        MINIO_SECRET_KEY: "minioadmin"

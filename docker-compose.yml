@@ -1,0 +1,69 @@
+# /vision-serveless/docker-compose.yml
+# VERSÃO CORRIGIDA COM TAGS DE IMAGEM ESPECÍFICAS E ESTÁVEIS
+
+services:
+  # Serviço de Armazenamento de Objetos
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  # --- Stack OpenFaaS com Versões Corrigidas ---
+  gateway:
+    # IMAGEM CORRIGIDA
+    image: openfaas/gateway:lts 
+    ports:
+      - 8080:8080
+    environment:
+      functions_provider_url: "http://faas-swarm:8080/"
+      read_timeout: "65s"
+      write_timeout: "65s"
+      upstream_timeout: "60s"
+      direct_functions: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  faas-swarm:
+    # IMAGEM CORRIGIDA
+    image: openfaas/faas-swarm:0.5.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  nats:
+    # NATS já usava uma versão específica, mantemos
+    image: nats-streaming:0.25.2
+    command: "--store file --dir /data --cluster_id faas-cluster"
+    volumes:
+      - nats_data:/data
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  queue-worker:
+    # IMAGEM CORRIGIDA
+    image: openfaas/queue-worker:0.13.2
+    environment:
+      ack_wait: "60s"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+volumes:
+  minio_data:
+  nats_data:
