@@ -1,52 +1,75 @@
 # /vision-serveless/faas-function/handler.py
 import os
-from minio import Minio
+import boto3
+import json
 from urllib.parse import unquote_plus
-from processors import image_processor, video_processor, slideshow_creator
+from processors import image_processor, video_processor
 
-MINIO_URL = os.environ.get("MINIO_URL")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY")
-minio_client = Minio(MINIO_URL, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=False)
+S3_ENDPOINT_URL = f"http://{os.environ.get('LOCALSTACK_HOSTNAME')}:{os.environ.get('EDGE_PORT')}"
 INPUT_BUCKET = "input-bucket"
 OUTPUT_BUCKET = "output-bucket"
+STATS_FILE_KEY = "stats.json"
 TEMP_DIR = "/tmp"
 
-def handle(req):
+s3_client = boto3.client("s3", endpoint_url=S3_ENDPOINT_URL)
+
+def update_stats(operation):
     try:
-        event = req.get_json()
+        # Baixa o arquivo de estatísticas atual
+        stats_obj = s3_client.get_object(Bucket=OUTPUT_BUCKET, Key=STATS_FILE_KEY)
+        stats_data = json.loads(stats_obj['Body'].read().decode('utf-8'))
+        
+        # Incrementa o contador da operação
+        current_count = stats_data.get("operations", {}).get(operation, 0)
+        stats_data["operations"][operation] = current_count + 1
+        
+        # Faz o upload do arquivo atualizado
+        s3_client.put_object(
+            Bucket=OUTPUT_BUCKET,
+            Key=STATS_FILE_KEY,
+            Body=json.dumps(stats_data),
+            ContentType='application/json'
+        )
+        print(f"Estatísticas para '{operation}' atualizadas.")
+    except Exception as e:
+        print(f"Erro ao atualizar estatísticas: {e}")
+
+
+def handler(event, context):
+    try:
         record = event['Records'][0]
-        metadata = record['s3']['object'].get('userMetadata', {})
-        operation = metadata.get('x-amz-meta-operation')
-        params_str = metadata.get('x-amz-meta-params', '')
         bucket = record['s3']['bucket']['name']
         key = unquote_plus(record['s3']['object']['key'])
+        
+        # Busca os metadados para saber qual operação executar
+        head_object = s3_client.head_object(Bucket=bucket, Key=key)
+        metadata = head_object.get('Metadata', {})
+        operation = metadata.get('operation')
+        params = metadata.get('params', '')
+
         local_path = os.path.join(TEMP_DIR, os.path.basename(key))
-        
-        print(f"Evento recebido. Operação: '{operation}', Arquivo: '{key}'")
-        minio_client.fget_object(bucket, key, local_path)
+        s3_client.download_file(bucket, key, local_path)
+
         output_path = None
-        
         if operation == 'img_to_bw':
             output_path = image_processor.convert_to_bw(local_path)
         elif operation == 'img_change_format':
-            output_path = image_processor.change_format(local_path, params_str)
+            output_path = image_processor.change_format(local_path, params)
         elif operation == 'extract_frame':
-            second = int(params_str) if params_str and params_str.isdigit() else None
+            second = int(params) if params.isdigit() else None
             output_path = video_processor.extract_frame(local_path, second)
         else:
-            print(f"Operação desconhecida ou não especificada: '{operation}'")
-            return {"status": "error", "message": "Operação desconhecida"}, 400
+            raise ValueError(f"Operação desconhecida: {operation}")
 
-        if output_path and os.path.exists(output_path):
+        if output_path:
             output_key = f"processed-{os.path.basename(output_path)}"
-            minio_client.fput_object(OUTPUT_BUCKET, output_key, output_path)
-            print(f"Resultado salvo como '{output_key}'")
-            os.remove(output_path)
+            s3_client.upload_file(output_path, OUTPUT_BUCKET, output_key)
+            # Se deu tudo certo, atualiza as estatísticas
+            update_stats(operation)
+            return {"status": "success", "output_key": output_key}
         
-        os.remove(local_path)
-        return {"status": "success", "operation": operation}, 200
+        return {"status": "error", "message": "Nenhum arquivo de saída foi gerado."}
 
     except Exception as e:
         print(f"Erro no handler: {e}")
-        return {"status": "error", "message": str(e)}, 500
+        raise e
